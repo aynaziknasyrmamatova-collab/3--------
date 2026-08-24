@@ -1,0 +1,145 @@
+
+import asyncio
+import sqlite3
+
+from aiogram import Bot, Dispatcher, F
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    KeyboardButton,
+    Message,
+    ReplyKeyboardMarkup,
+)
+TOKEN="8652006388:AAFj2ygPuIFZhK7W46xQOE7Sb9JThvr4Dw0"
+bot=Bot(token=TOKEN)
+dp=Dispatcher()
+
+conn = sqlite3.connect("shoplist.db", check_same_thread=False)
+cur = conn.cursor()
+cur.execute("""
+    CREATE TABLE IF NOT EXISTS items(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        telegram_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        quantity TEXT NOT NULL
+    )
+""")
+conn.commit()
+
+
+class AddItem(StatesGroup):
+    name = State()
+    quantity = State()
+
+
+def main_menu():
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="Добавить товар"), KeyboardButton(text="Мои товары")],
+            [KeyboardButton(text="Удалить товар")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+@dp.message(F.text == "/start")
+async def start(message: Message):
+    await message.answer(
+        "<b>МОЙ СПИСОК ПОКУПОК</b>\n\n"
+        "Здесь ты можешь создавать и хранить список покупок.",
+        reply_markup=main_menu(),
+        parse_mode="HTML",
+    )
+
+
+@dp.message(F.text == "Добавить товар")
+async def add_item_start(message: Message, state: FSMContext):
+    await state.set_state(AddItem.name)
+    await message.answer("Введите название товара:")
+
+
+@dp.message(AddItem.name)
+async def add_item_name(message: Message, state: FSMContext):
+    await state.update_data(name=message.text)
+    await state.set_state(AddItem.quantity)
+    await message.answer("Теперь введите количество товара:")
+
+
+@dp.message(AddItem.quantity)
+async def add_item_quantity(message: Message, state: FSMContext):
+    user_data = await state.get_data()
+    name = user_data["name"]
+    quantity = message.text
+    telegram_id = message.from_user.id
+    cur.execute(
+        "INSERT INTO items (telegram_id, name, quantity) VALUES (?, ?, ?)",
+        (telegram_id, name, quantity),
+    )
+    conn.commit()
+    await state.clear()
+    await message.answer(f"Товар «{name}» ({quantity}) успешно добавлен")
+
+
+@dp.message(F.text == "Мои товары")
+async def show_shoplist(message: Message):
+    telegram_id = message.from_user.id
+    cur.execute(
+        "SELECT name, quantity FROM items WHERE telegram_id = ?",
+        (telegram_id,),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        await message.answer("Ваш список покупок пуст")
+        return
+
+    text = "Ваш список покупок:\n\n"
+    text += "\n".join(f"• {name} — {quantity}" for name, quantity in rows)
+    await message.answer(text)
+
+
+@dp.message(F.text == "Удалить товар")
+async def delete_shoplist_start(message: Message):
+    telegram_id = message.from_user.id
+    cur.execute(
+        "SELECT id, name, quantity FROM items WHERE telegram_id = ?",
+        (telegram_id,),
+    )
+    rows = cur.fetchall()
+    if not rows:
+        await message.answer("Список пуст.")
+        return
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(
+                text=f"{name} ({quantity})",
+                callback_data=f"del_{item_id}",
+            )]
+            for item_id, name, quantity in rows
+        ]
+    )
+    await message.answer("Выберите товар, который хотите удалить:", reply_markup=keyboard)
+
+
+@dp.callback_query(F.data.startswith("del_"))
+async def delete(callback: CallbackQuery):
+    item_id = int(callback.data.split("_", 1)[1])
+    cur.execute(
+        "DELETE FROM items WHERE id = ? AND telegram_id = ?",
+        (item_id, callback.from_user.id),
+    )
+    conn.commit()
+    await callback.message.edit_text("Товар успешно удален из списка!")
+    await callback.answer()
+
+
+async def main():
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
+
