@@ -125,7 +125,7 @@ async def delete_shoplist_start(message: Message):
 
 
 @dp.callback_query(F.data.startswith("del_"))
-async def delete(callback: CallbackQuery):
+async def deletellback: CallbackQuery):
     item_id = int(callback.data.split("_", 1)[1])
     cur.execute(
         "DELETE FROM items WHERE id = ? AND telegram_id = ?",
